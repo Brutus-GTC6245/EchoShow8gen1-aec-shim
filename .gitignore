@@ -1,0 +1,8 @@
+# build output
+/out/
+*.o
+*.a
+# scratch
+*.raw
+*.pcm
+.DS_Store
