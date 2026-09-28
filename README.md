@@ -88,7 +88,8 @@ tools/play6.c                tinyalsa tone player (drives the DAC to exercise th
 scripts/build.sh             standalone NDK build (no ROM tree)
 scripts/install.sh           reversible LD_PRELOAD install over adb (.orig backups)
 scripts/uninstall.sh         restore .orig backups, remove shim, reboot clean
-prebuilt/libamznaec_shim.so  armv7 build of src/ (stripped) — install without building
+prebuilt/libamznaec_shim.so       armv7 Show81stGen (6ch) build of src/ (stripped) — install without building
+prebuilt/libamznaec_shim_show5.so armv7 Show52ndGen (4ch) build for the Echo Show 5 (gen1/gen2)
 third_party/speexdsp/        vendored SpeexDSP sources (BSD) so the build is reproducible
 ```
 
@@ -102,8 +103,10 @@ export ANDROID_NDK=$HOME/Library/Android/sdk/ndk/28.2.13676358   # or your path
 ./scripts/build.sh --device Show52ndGen     # build the Echo Show 5 (2nd gen) 4-channel variant
 ```
 
-`prebuilt/libamznaec_shim.so` is a stripped **Show81stGen** build of `src/` if you'd
-rather not build.
+`prebuilt/libamznaec_shim.so` is a stripped **Show81stGen** (6ch) build of `src/` if
+you'd rather not build; `prebuilt/libamznaec_shim_show5.so` is the stripped
+**Show52ndGen** (4ch) build for the Echo Show 5. To install a prebuilt, point the
+installer at it: `./scripts/install.sh --so prebuilt/libamznaec_shim_show5.so`.
 
 ### Which device (channel count)
 
