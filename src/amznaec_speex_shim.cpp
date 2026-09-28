@@ -13,7 +13,7 @@
 // but the last two channels are ALWAYS the DAC loopback):
 //   -DShow81stGen  Echo Show 8 (1st gen, crown): 6 ch = 4 mic + 2 loopback (ch4,5)
 //   -DShow52ndGen  Echo Show 5 (2nd gen, cronos): 4 ch = 2 mic + 2 loopback (ch2,3)
-// Exactly one must be defined; the reference channels are always the last two.
+// No flag defaults to Show81stGen (6 ch); the reference channels are always the last two.
 //
 // Tunables (persist.vendor.amznaec.*, read at PCM open):
 //   enable(1) gain_db(20) hpf(1) log(0) spx_filter_ms(64) spx_stereo(1)
@@ -56,12 +56,10 @@ namespace {
 // Total channel count of the FPGA capture stream, selected at build time.
 // The last two channels are always the DAC loopback (the far-end reference);
 // everything before them is microphones.
-#if defined(Show81stGen)
-constexpr unsigned kChannels = 6;           // Echo Show 8 gen1 (crown): 4 mic + 2 loopback
-#elif defined(Show52ndGen)
+#if defined(Show52ndGen)
 constexpr unsigned kChannels = 4;           // Echo Show 5 gen2 (cronos): 2 mic + 2 loopback
-#else
-#error "Define a device: -DShow81stGen (6ch) or -DShow52ndGen (4ch)"
+#else  // Show81stGen (default when no device flag is given)
+constexpr unsigned kChannels = 6;           // Echo Show 8 gen1 (crown): 4 mic + 2 loopback
 #endif
 static_assert(kChannels >= 3, "need at least 1 mic + 2 loopback channels");
 

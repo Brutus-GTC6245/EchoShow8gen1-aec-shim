@@ -119,7 +119,8 @@ that many channels:
 
 A binary built for one device is a pass-through no-op on the other (the channel count
 in `is_mic_pcm` won't match), so you can't accidentally run the 6-channel geometry on a
-4-channel stream. Build with exactly one flag; omitting both is a compile error.
+4-channel stream. No flag defaults to `Show81stGen` (6 channels); pass `-DShow52ndGen`
+for the 4-channel build.
 
 > The Echo Show 5 (2nd gen) 4-channel geometry (loopback = last two channels) is
 > inferred from the same MT8163 FPGA front end documented for `crown`; verify the
