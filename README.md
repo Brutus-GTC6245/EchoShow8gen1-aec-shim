@@ -5,6 +5,10 @@ Acoustic echo cancellation (AEC) for the **Amazon Echo Show 8 (1st gen)** runnin
 no ROM patch. It gives an always-on ambient voice assistant clean **barge-in**: you
 can speak over the device's own playback and be heard.
 
+> Also builds for the **Echo Show 5 (2nd gen)** (`cronos`) — same MT8163 audio front
+> end, a 4-channel stream instead of 6. Pick the device at build time with
+> `--device Show52ndGen`; see [Which device](#which-device-channel-count).
+
 > ⚠️ **Root + supervised use.** This `LD_PRELOAD`s a native library into the vendor
 > audio service on a jailbroken device. It is reversible (`scripts/uninstall.sh`),
 > but a bad install can wedge the fragile SPI/FPGA audio path. Only run it on a
@@ -94,10 +98,33 @@ Standalone, no ROM tree — needs Android **NDK r28** (`28.2.13676358` tested):
 
 ```bash
 export ANDROID_NDK=$HOME/Library/Android/sdk/ndk/28.2.13676358   # or your path
-./scripts/build.sh            # -> out/libamznaec_shim.so (armv7, 32-bit)
+./scripts/build.sh                          # -> out/libamznaec_shim.so (armv7, 32-bit)
+./scripts/build.sh --device Show52ndGen     # build the Echo Show 5 (2nd gen) 4-channel variant
 ```
 
-`prebuilt/libamznaec_shim.so` is a stripped build of `src/` if you'd rather not build.
+`prebuilt/libamznaec_shim.so` is a stripped **Show81stGen** build of `src/` if you'd
+rather not build.
+
+### Which device (channel count)
+
+The FPGA capture stream's total channel count differs by device, but the **last two
+channels are always the DAC loopback** (the far-end reference). The device is a build
+flag; `--device` sets it, and the shim only engages when it sees a stream with exactly
+that many channels:
+
+| `--device` | Device | Total channels | Mics | Loopback (last two) |
+|------------|--------|---------------:|-----:|---------------------|
+| `Show81stGen` *(default)* | Echo Show 8 (1st gen, `crown`) | 6 | ch0–3 | ch4, ch5 |
+| `Show52ndGen` | Echo Show 5 (2nd gen, `cronos`) | 4 | ch0–1 | ch2, ch3 |
+
+A binary built for one device is a pass-through no-op on the other (the channel count
+in `is_mic_pcm` won't match), so you can't accidentally run the 6-channel geometry on a
+4-channel stream. Build with exactly one flag; omitting both is a compile error.
+
+> The Echo Show 5 (2nd gen) 4-channel geometry (loopback = last two channels) is
+> inferred from the same MT8163 FPGA front end documented for `crown`; verify the
+> loopback channels on the target unit with `tools/cap6.c` (it drops to zero the
+> instant playback stops) before relying on it.
 
 ## Install / uninstall (adb, supervised)
 

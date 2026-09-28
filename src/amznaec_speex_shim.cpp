@@ -1,13 +1,19 @@
-// Speex-only acoustic echo cancellation shim for the Echo Show (crown) audio HAL.
+// Speex-only acoustic echo cancellation shim for the Echo Show audio HAL.
 //
 // LD_PRELOADed into android.hardware.audio.service. Interposes tinyalsa pcm_open/
-// pcm_read/pcm_close; when the blob opens the FPGA mic stream (6ch S24_3LE 16kHz,
+// pcm_read/pcm_close; when the blob opens the FPGA mic stream (S24_3LE 16kHz,
 // pcmC0D22c) it runs SpeexDSP's linear echo canceller on mic channel 0 using the
-// average of the DAC-loopback channels 4 and 5 as the far end, and writes the
-// cleaned samples back before the blob sees them. Linear-only (no nonlinear
-// suppressor by default) so the talker is preserved during double-talk — ideal for
-// wake-word / barge-in. Self-contained: WebRTC-free, links only the bundled
-// speexdsp + NDK libc/liblog. Modeled on jxlarrea's amznaec_shim.cpp (speex path).
+// average of the two DAC-loopback channels as the far end, and writes the cleaned
+// samples back before the blob sees them. Linear-only (no nonlinear suppressor by
+// default) so the talker is preserved during double-talk — ideal for wake-word /
+// barge-in. Self-contained: WebRTC-free, links only the bundled speexdsp + NDK
+// libc/liblog. Modeled on jxlarrea's amznaec_shim.cpp (speex path).
+//
+// Device select (build flag; the stream's total channel count differs by device,
+// but the last two channels are ALWAYS the DAC loopback):
+//   -DShow81stGen  Echo Show 8 (1st gen, crown): 6 ch = 4 mic + 2 loopback (ch4,5)
+//   -DShow52ndGen  Echo Show 5 (2nd gen, cronos): 4 ch = 2 mic + 2 loopback (ch2,3)
+// Exactly one must be defined; the reference channels are always the last two.
 //
 // Tunables (persist.vendor.amznaec.*, read at PCM open):
 //   enable(1) gain_db(20) hpf(1) log(0) spx_filter_ms(64) spx_stereo(1)
@@ -47,12 +53,23 @@ struct pcm_config {
 
 namespace {
 
+// Total channel count of the FPGA capture stream, selected at build time.
+// The last two channels are always the DAC loopback (the far-end reference);
+// everything before them is microphones.
+#if defined(Show81stGen)
+constexpr unsigned kChannels = 6;           // Echo Show 8 gen1 (crown): 4 mic + 2 loopback
+#elif defined(Show52ndGen)
+constexpr unsigned kChannels = 4;           // Echo Show 5 gen2 (cronos): 2 mic + 2 loopback
+#else
+#error "Define a device: -DShow81stGen (6ch) or -DShow52ndGen (4ch)"
+#endif
+static_assert(kChannels >= 3, "need at least 1 mic + 2 loopback channels");
+
 constexpr int kRate = 16000;
-constexpr unsigned kChannels = 6;
 constexpr int kBlock = 160;                 // 10 ms
-constexpr unsigned kFrameBytes = kChannels * 3;   // S24_3LE, 6ch
+constexpr unsigned kFrameBytes = kChannels * 3;   // S24_3LE
 constexpr unsigned kBlockBytes = kBlock * kFrameBytes;
-constexpr int kRefFirst = 4;                // loopback channels 4,5
+constexpr int kRefFirst = (int)kChannels - 2;     // last two channels are the loopback
 
 typedef struct pcm* (*pcm_open_t)(unsigned, unsigned, unsigned, struct pcm_config*);
 typedef int (*pcm_read_t)(struct pcm*, void*, unsigned);
