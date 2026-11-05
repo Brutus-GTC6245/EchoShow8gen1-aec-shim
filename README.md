@@ -156,7 +156,7 @@ adb logcat -d | grep amznaec
 |----------|--------:|---------|
 | `enable` | `1` | master on/off |
 | `log` | `0` | emit the 5 s `ref/mic in/out` telemetry (set `0` for daily use) |
-| `gain_db` | `20` | makeup gain applied to the cleaned mic |
+| `gain_db` | `20` | makeup gain applied to the mic (up to `spx_pregain_db` of it before the canceller, the rest after) |
 | `hpf` | `1` | ~80 Hz high-pass on the near-end |
 | `spx_filter_ms` | `64` | adaptive filter length; raise for a longer echo tail |
 | `spx_stereo` | `1` | use ch4 & ch5 as a stereo reference (vs their average) |
@@ -165,6 +165,15 @@ adb logcat -d | grep amznaec
 | `spx_denoise` | `0` | Speex denoiser |
 | `spx_noise_suppress` | `-15` | denoiser strength (dB) when enabled |
 | `spx_headroom_db` | `12` | internal headroom before the 16-bit Speex core |
+| `spx_pregain_db` | `20` | most of `gain_db` applied to the mic *before* the 16-bit Speex core, so quiet audio isn't rounded to zero; lower it if very loud playback clips the near end |
+
+**Why some gain comes before the canceller.** The mic is 24-bit but the Speex core is
+16-bit, and at `spx_headroom_db 12` a quiet room sits below one 16-bit step. Applying
+all of `gain_db` afterwards only magnifies those steps: a quiet room or a soft talker
+reaches the app as mostly exact-zero samples, which costs wake-word accuracy. Applying
+up to `spx_pregain_db` first keeps that detail; the cap keeps loud echo from clipping
+the near end ahead of the canceller. `spx_pregain_db 0` applies all the gain
+afterwards, as before (but still rounds rather than truncates).
 
 Change live, then reopen the mic (toggle capture) for it to take effect:
 `adb shell setprop persist.vendor.amznaec.spx_filter_ms 96`.
