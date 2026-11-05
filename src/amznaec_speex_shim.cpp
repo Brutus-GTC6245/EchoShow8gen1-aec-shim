@@ -17,8 +17,8 @@
 //
 // Tunables (persist.vendor.amznaec.*, read at PCM open):
 //   enable(1) gain_db(20) hpf(1) log(0) spx_filter_ms(64) spx_stereo(1)
-//   spx_headroom_db(12) spx_echo_suppress(0=linear only) spx_echo_suppress_active(0)
-//   spx_denoise(0) spx_noise_suppress(-15)
+//   spx_headroom_db(12) spx_pregain_db(20) spx_echo_suppress(0=linear only)
+//   spx_echo_suppress_active(0) spx_denoise(0) spx_noise_suppress(-15)
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -89,7 +89,8 @@ int prop_int(const char* k, int d) {
 
 struct Settings {
     bool enable, hpf, log;
-    int gain_db, filter_ms, echo_suppress, echo_suppress_active, denoise, noise_suppress, stereo, headroom_db;
+    int gain_db, filter_ms, echo_suppress, echo_suppress_active, denoise, noise_suppress, stereo, headroom_db,
+        pregain_db;
 };
 Settings read_settings() {
     Settings s;
@@ -104,6 +105,7 @@ Settings read_settings() {
     s.noise_suppress = prop_int("persist.vendor.amznaec.spx_noise_suppress", -15);
     s.stereo = prop_int("persist.vendor.amznaec.spx_stereo", 1);
     s.headroom_db = prop_int("persist.vendor.amznaec.spx_headroom_db", 12);
+    s.pregain_db = prop_int("persist.vendor.amznaec.spx_pregain_db", 20);
     return s;
 }
 
@@ -181,7 +183,16 @@ bool make_speex(const Settings& s) {
     return true;
 }
 
-void run_speex(const float* src, float* dst) {
+inline int16_t to16(float v) { return (int16_t)lrintf(fmaxf(-32768.f, fminf(32767.f, v))); }
+
+// The Speex core is 16-bit, but the 24-bit mic idles far below one 16-bit step at
+// `sc`. So up to `pregain_db` of the makeup gain is applied to the near end *before*
+// quantizing (and with rounding, not truncation): applied afterwards it only magnifies
+// the steps, and a quiet room or a soft talker reaches the app as mostly exact zeros.
+// The cap keeps loud echo from clipping the near end ahead of the canceller; the rest
+// of the gain is applied after it. The reference stays unscaled — the linear filter
+// absorbs the gain. `dst` comes back carrying the `pre` part of the gain.
+void run_speex(const float* src, float* dst, float pre) {
     int16_t near16[kBlock], ref16[kBlock * 2], out16[kBlock];
     const float a = 0.969f;  // ~80 Hz first-order high pass
     const float sc = 32768.f * powf(10.f, -(float)g.s.headroom_db / 20.f);
@@ -190,12 +201,12 @@ void run_speex(const float* src, float* dst) {
         float y = a * (g.hpf_y1 + x - g.hpf_x1);
         g.hpf_x1 = x; g.hpf_y1 = y;
         float v = g.s.hpf ? y : x;
-        near16[i] = (int16_t)fmaxf(-32768.f, fminf(32767.f, v * sc));
+        near16[i] = to16(v * pre * sc);
         if (g.s.stereo) {
-            ref16[2 * i] = (int16_t)fmaxf(-32768.f, fminf(32767.f, g.refl[i] * sc));
-            ref16[2 * i + 1] = (int16_t)fmaxf(-32768.f, fminf(32767.f, g.refr[i] * sc));
+            ref16[2 * i] = to16(g.refl[i] * sc);
+            ref16[2 * i + 1] = to16(g.refr[i] * sc);
         } else {
-            ref16[i] = (int16_t)fmaxf(-32768.f, fminf(32767.f, g.ref[i] * sc));
+            ref16[i] = to16(g.ref[i] * sc);
         }
     }
     speex_echo_cancellation(g.spx, near16, ref16, out16);
@@ -214,12 +225,15 @@ void process_block_l(uint8_t* frames) {
         e_ref += (double)g.ref[f] * g.ref[f];
         e_in += (double)g.near0[f] * g.near0[f];
     }
-    run_speex(g.near0, g.outbuf);
-    const float gain = powf(10.f, (float)g.s.gain_db / 20.f);
+    const int pre_db = g.s.pregain_db < g.s.gain_db ? g.s.pregain_db : g.s.gain_db;
+    const float pre = powf(10.f, (float)pre_db / 20.f);
+    const float post = powf(10.f, (float)(g.s.gain_db - pre_db) / 20.f);
+    run_speex(g.near0, g.outbuf, pre);
     for (int f = 0; f < kBlock; f++) {
         uint8_t* fr = frames + f * kFrameBytes;
-        putf(fr + 0 * 3, g.outbuf[f] * gain);   // write cleaned ch0 (the channel the blob keeps)
-        e_out += (double)g.outbuf[f] * g.outbuf[f];
+        putf(fr + 0 * 3, g.outbuf[f] * post);   // write cleaned ch0 (the channel the blob keeps)
+        float o = g.outbuf[f] / pre;            // telemetry stays pre-gain, comparable to `mic in`
+        e_out += (double)o * o;
     }
     g.e_ref += e_ref; g.e_in += e_in; g.e_out += e_out;
     if (++g.blocks % 500 == 0 && g.s.log) {
@@ -259,10 +273,10 @@ extern "C" struct pcm* pcm_open(unsigned int card, unsigned int device, unsigned
     g.in.reserve(4 * kBlockBytes);
     g.out.assign(kBlockBytes, 0);  // one block of priming silence
     ALOGI("mic PCM %u:%u opened: %u ch %u Hz period %u; SPEEX linear filter=%dms suppress=%d/%d "
-          "denoise=%d/%ddB stereo=%d hpf=%d gain=%ddB",
+          "denoise=%d/%ddB stereo=%d hpf=%d gain=%ddB pregain=%ddB",
           card, device, config->channels, config->rate, config->period_size, g.s.filter_ms,
           g.s.echo_suppress, g.s.echo_suppress_active, g.s.denoise, g.s.noise_suppress, g.s.stereo,
-          g.s.hpf, g.s.gain_db);
+          g.s.hpf, g.s.gain_db, g.s.pregain_db);
     pthread_mutex_unlock(&g.lock);
     return pcm;
 }
